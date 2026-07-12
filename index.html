@@ -2244,35 +2244,45 @@
     }
 
     // === NEW: UID INJECTION FOR RAZORPAY / UPI LINKS ===
-    // tn me bas UID jayega, tr ko touch nahi karna
+    // Ye function har payment link me UID inject karta hai taaki webhook me UID jaye
+    // UPI link ke liye -> tn (transaction note) me UID
+    // Razorpay https link ke liye -> notes[uid] query param me UID
     function buildFinalPaymentLink(baseLink, uid) {
         if (!baseLink || baseLink === 'FREE' || baseLink === 'FREE_PACK') return baseLink;
         if (!uid) return baseLink;
         uid = String(uid).trim();
         try {
             if (baseLink.startsWith('upi://')) {
-                // UPI link - sirf tn me UID daalo, tr jaisa hai waisa rehne do
+                // UPI link - tn parameter me UID daalo
                 let urlObj = new URL(baseLink);
-                urlObj.searchParams.set('tn', uid);
+                // Razorpay webhook me description/notes me aayega
+                urlObj.searchParams.set('tn', `UID ${uid} - UCify`);
+                // tr (transaction ref) me bhi UID daal do for extra safety
+                urlObj.searchParams.set('tr', `UCIFY${uid}${Date.now().toString().slice(-4)}`);
                 return urlObj.toString();
             } else {
                 // Razorpay Payment Link ( https://rzp.io/l/... )
+                // Razorpay supports notes[KEY]=VALUE via URL
                 let separator = baseLink.includes('?') ? '&' : '?';
                 let uidEncoded = encodeURIComponent(uid);
-                let notesParams = `notes[uid]=${uidEncoded}&notes[bgmi_uid]=${uidEncoded}&notes[BGMI_UID]=${uidEncoded}`;
-                let desc = encodeURIComponent(uid);
+                // Multiple keys for redundancy - webhook me kahi se bhi pakad lenge
+                let notesParams = `notes[uid]=${uidEncoded}&notes[bgmi_uid]=${uidEncoded}&notes[BGMI_UID]=${uidEncoded}&notes[USER_UID]=${uidEncoded}`;
+                let desc = encodeURIComponent(`UID_${uid}`);
+                // description bhi bhejo fallback ke liye
                 return `${baseLink}${separator}${notesParams}&description=${desc}`;
             }
         } catch(e) {
+            // Fallback string manipulation agar URL parsing fail ho
+            console.log('buildFinalPaymentLink fallback', e);
             if (baseLink.includes('upi://')) {
                 if (baseLink.includes('tn=')) {
-                    return baseLink.replace(/tn=[^&]*/, `tn=${encodeURIComponent(uid)}`);
+                    return baseLink.replace(/tn=[^&]*/, `tn=UID%20${uid}%20-%20UCify`);
                 } else {
-                    return baseLink + `&tn=${encodeURIComponent(uid)}`;
+                    return baseLink + `&tn=UID%20${uid}%20-%20UCify`;
                 }
             } else {
                 let sep = baseLink.includes('?') ? '&' : '?';
-                return `${baseLink}${sep}notes[uid]=${encodeURIComponent(uid)}`;
+                return `${baseLink}${sep}notes[uid]=${encodeURIComponent(uid)}&notes[bgmi_uid]=${encodeURIComponent(uid)}`;
             }
         }
     }
@@ -3805,18 +3815,27 @@
     };
 
     function startPaymentVerification(amountToCheck, uidToCheck) {
+        if(!uidToCheck || String(uidToCheck).trim().length < 9) {
+            console.error("UID missing, verification nahi hogi:", uidToCheck);
+            const vStatus = document.getElementById('verificationStatus');
+            if(vStatus) vStatus.innerHTML = '<div style="color:#ff4757;padding:10px;">Error: UID missing. Please go back and enter UID.</div>';
+            return;
+        }
         if(paymentVerificationInterval) clearInterval(paymentVerificationInterval);
         let verificationApiUrl = window.siteConfig.razorpayApiUrl || "https://script.google.com/macros/s/AKfycby9ZtsDvV3Aqdg1XIfeEvt3dQQGXNn4inKC04RZjTGNxipHwlDyMhMx5iABq_kEdWKwzg/exec";
+        console.log("Starting UID+Amount verification for:", amountToCheck, uidToCheck);
         
         paymentVerificationInterval = setInterval(async () => {
             try {
-                // UID based verification - time window hataya, ab sirf amount+uid se match hoga
-                // 80 sec ka chakkar khatam, 2 users same pack le to bhi mixup nahi
-                let uidParam = uidToCheck ? `&uid=${encodeURIComponent(uidToCheck)}&bgmi_uid=${encodeURIComponent(uidToCheck)}` : '';
-                const res = await fetch(`${verificationApiUrl}?amount=${amountToCheck}${uidParam}&t=${Date.now()}`);
+                let uidParam = `&uid=${encodeURIComponent(uidToCheck)}&bgmi_uid=${encodeURIComponent(uidToCheck)}&BGMI_UID=${encodeURIComponent(uidToCheck)}`;
+                const url = `${verificationApiUrl}?amount=${encodeURIComponent(amountToCheck)}${uidParam}&t=${Date.now()}`;
+                console.log("Polling:", url);
+                const res = await fetch(url);
                 const data = await res.json();
+                console.log("Verification response:", data);
                 
-                if(data.verified) {
+                // IMPORTANT: Sirf tabhi confirm karo jab server ne verified:true + UID match kiya ho
+                if(data.verified === true) {
                     clearInterval(paymentVerificationInterval);
                     if(qrTimer) clearInterval(qrTimer);
                     if (razorpayWindow && !razorpayWindow.closed) { razorpayWindow.close(); }
@@ -3825,7 +3844,7 @@
                     
                     processSuccessfulPayment();
                 }
-            } catch (err) { console.log("Polling payment status..."); }
+            } catch (err) { console.log("Polling... waiting for payment with UID", uidToCheck, err.message); }
         }, 5000); 
     }
 
