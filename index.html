@@ -2244,45 +2244,35 @@
     }
 
     // === NEW: UID INJECTION FOR RAZORPAY / UPI LINKS ===
-    // Ye function har payment link me UID inject karta hai taaki webhook me UID jaye
-    // UPI link ke liye -> tn (transaction note) me UID
-    // Razorpay https link ke liye -> notes[uid] query param me UID
+    // tn me bas UID jayega, tr ko touch nahi karna
     function buildFinalPaymentLink(baseLink, uid) {
         if (!baseLink || baseLink === 'FREE' || baseLink === 'FREE_PACK') return baseLink;
         if (!uid) return baseLink;
         uid = String(uid).trim();
         try {
             if (baseLink.startsWith('upi://')) {
-                // UPI link - tn parameter me UID daalo
+                // UPI link - sirf tn me UID daalo, tr jaisa hai waisa rehne do
                 let urlObj = new URL(baseLink);
-                // Razorpay webhook me description/notes me aayega
-                urlObj.searchParams.set('tn', `UID ${uid} - UCify`);
-                // tr (transaction ref) me bhi UID daal do for extra safety
-                urlObj.searchParams.set('tr', `UCIFY${uid}${Date.now().toString().slice(-4)}`);
+                urlObj.searchParams.set('tn', uid);
                 return urlObj.toString();
             } else {
                 // Razorpay Payment Link ( https://rzp.io/l/... )
-                // Razorpay supports notes[KEY]=VALUE via URL
                 let separator = baseLink.includes('?') ? '&' : '?';
                 let uidEncoded = encodeURIComponent(uid);
-                // Multiple keys for redundancy - webhook me kahi se bhi pakad lenge
-                let notesParams = `notes[uid]=${uidEncoded}&notes[bgmi_uid]=${uidEncoded}&notes[BGMI_UID]=${uidEncoded}&notes[USER_UID]=${uidEncoded}`;
-                let desc = encodeURIComponent(`UID_${uid}`);
-                // description bhi bhejo fallback ke liye
+                let notesParams = `notes[uid]=${uidEncoded}&notes[bgmi_uid]=${uidEncoded}&notes[BGMI_UID]=${uidEncoded}`;
+                let desc = encodeURIComponent(uid);
                 return `${baseLink}${separator}${notesParams}&description=${desc}`;
             }
         } catch(e) {
-            // Fallback string manipulation agar URL parsing fail ho
-            console.log('buildFinalPaymentLink fallback', e);
             if (baseLink.includes('upi://')) {
                 if (baseLink.includes('tn=')) {
-                    return baseLink.replace(/tn=[^&]*/, `tn=UID%20${uid}%20-%20UCify`);
+                    return baseLink.replace(/tn=[^&]*/, `tn=${encodeURIComponent(uid)}`);
                 } else {
-                    return baseLink + `&tn=UID%20${uid}%20-%20UCify`;
+                    return baseLink + `&tn=${encodeURIComponent(uid)}`;
                 }
             } else {
                 let sep = baseLink.includes('?') ? '&' : '?';
-                return `${baseLink}${sep}notes[uid]=${encodeURIComponent(uid)}&notes[bgmi_uid]=${encodeURIComponent(uid)}`;
+                return `${baseLink}${sep}notes[uid]=${encodeURIComponent(uid)}`;
             }
         }
     }
